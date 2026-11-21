@@ -201,11 +201,11 @@ npm.cmd run package
 The build helper restores locked dependencies, runs unit tests, and packages a
 VSIX. Packaging also runs JavaScript syntax checks.
 
-Install `renpy-sound-picker-0.0.1.vsix` using VS Code's Extensions menu:
+Install `renpy-sound-picker-0.0.2.vsix` using VS Code's Extensions menu:
 **... > Install from VSIX...**, or:
 
 ```powershell
-code --install-extension renpy-sound-picker-0.0.1.vsix
+code --install-extension renpy-sound-picker-0.0.2.vsix
 ```
 
 You can distribute that VSIX to friends; they only need VS Code 1.90 or newer.
