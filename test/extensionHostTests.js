@@ -74,6 +74,12 @@ async function run() {
   }
   const { chromium } = require('playwright-core');
   const browser = await chromium.connectOverCDP(`http://127.0.0.1:${process.env.SOUND_TEST_CDP_PORT}`, { noDefaults: true });
+  // Notification toasts (e.g. "extensions are temporarily disabled" on CI) overlay
+  // the webview in small windows and intercept pointer events, so clear them first.
+  const click = async (locator) => {
+    await vscode.commands.executeCommand('notifications.clearAll');
+    await locator.click();
+  };
   try {
     const editor = await vscode.window.showTextDocument(document);
     editor.selection = new vscode.Selection(1, 17, 1, 17);
@@ -94,41 +100,41 @@ async function run() {
     await frame.locator('#search').fill('wav tone');
     assert.equal(await frame.locator('.card').count(), 1);
     const beforePreview = document.getText();
-    await frame.getByRole('button', { name: 'Play audio/tone.wav', exact: true }).click();
+    await click(frame.getByRole('button', { name: 'Play audio/tone.wav', exact: true }));
     await waitFor(() => frame.locator('#audio').evaluate((audio) => audio.duration === 1.25 && audio.currentTime > 0), 'real WAV playback');
     assert.equal(document.getText(), beforePreview, 'preview never inserts');
     assert.match(await frame.locator('#metadata').textContent(), /0:01/);
     await frame.locator('#audio').evaluate((audio) => { audio.currentTime = 0.25; audio.volume = 0.25; });
-    await frame.getByRole('button', { name: 'Stop', exact: true }).click();
+    await click(frame.getByRole('button', { name: 'Stop', exact: true }));
     assert.equal(await frame.locator('#audio').evaluate((audio) => audio.paused && audio.currentTime === 0), true);
-    await frame.getByRole('button', { name: 'Insert audio/tone.wav', exact: true }).click();
+    await click(frame.getByRole('button', { name: 'Insert audio/tone.wav', exact: true }));
     await waitFor(() => document.lineAt(1).text === '    play music "audio/tone.wav" fadein 1.0', 'insertion after webview focus');
     assert.equal(await frame.locator('#search').count(), 1, 'picker stays open');
 
     await frame.locator('#search').fill('corrupt');
-    await frame.getByRole('button', { name: 'Play audio/corrupt.wav', exact: true }).click();
+    await click(frame.getByRole('button', { name: 'Play audio/corrupt.wav', exact: true }));
     await waitFor(async () => /could not|Cannot play|unavailable/.test(await frame.locator('#playerError').textContent()), 'visible corrupt audio error');
     assert.equal(await frame.locator('audio').count(), 1, 'only one active audio player');
-    await frame.getByRole('button', { name: 'Insert audio/corrupt.wav', exact: true }).click();
+    await click(frame.getByRole('button', { name: 'Insert audio/corrupt.wav', exact: true }));
     await waitFor(() => document.lineAt(1).text.includes('"audio/corrupt.wav"'), 'insertion independent of playback support');
 
     await vscode.window.showTextDocument(document, { viewColumn: vscode.ViewColumn.One });
     editor.selection = new vscode.Selection(2, 5, 2, 5);
-    await frame.getByRole('button', { name: 'Insert audio/corrupt.wav', exact: true }).click();
+    await click(frame.getByRole('button', { name: 'Insert audio/corrupt.wav', exact: true }));
     await waitFor(async () => /playlist item/.test(await frame.locator('#actionError').textContent()), 'ambiguous playlist target rejected');
     assert.match(document.lineAt(2).text, /"audio\/tone.wav"/);
 
     await vscode.window.showTextDocument(document);
     editor.selection = new vscode.Selection(7, 6, 7, 6);
     await frame.locator('#channel').selectOption('music');
-    await frame.getByRole('button', { name: 'Insert audio/corrupt.wav', exact: true }).click();
+    await click(frame.getByRole('button', { name: 'Insert audio/corrupt.wav', exact: true }));
     await waitFor(() => document.getText().endsWith('    return\n    play music "audio/corrupt.wav"'), 'new indented music statement');
 
     const change = new vscode.WorkspaceEdit();
     change.insert(uri, new vscode.Position(0, 0), '# changed while the picker has focus\n');
     assert.equal(await vscode.workspace.applyEdit(change), true);
     const afterChange = document.getText();
-    await frame.getByRole('button', { name: 'Insert audio/corrupt.wav', exact: true }).click();
+    await click(frame.getByRole('button', { name: 'Insert audio/corrupt.wav', exact: true }));
     await waitFor(async () => /document changed/.test(await frame.locator('#actionError').textContent()), 'stale insertion target rejected');
     assert.equal(document.getText(), afterChange);
 
