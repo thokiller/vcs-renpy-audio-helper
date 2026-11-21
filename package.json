@@ -84,7 +84,7 @@
           "type": "boolean",
           "scope": "resource",
           "default": true,
-          "description": "Warn about definitively missing static sound files. Expression statements and unverifiable dynamic/archive references are not marked missing."
+          "description": "Mark missing static sound files as warnings and unresolved filenames with multiple matches as information. Expression statements and unverifiable dynamic/archive references are not marked missing."
         },
         "renpySoundPicker.keepSoundPickerOpen": {
           "type": "boolean",

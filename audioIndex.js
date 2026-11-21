@@ -47,9 +47,16 @@ function createIndex(entries, definitions = [], directories = ['audio'], hasArch
     } else explicit.set(definition.name, definition.value);
   }
   for (const [name, value] of explicit) aliases.set(name, value);
+  const audioEntries = sorted.filter((entry) => AUDIO_EXTENSIONS.has(path.posix.extname(entry.relativePath).toLowerCase()));
+  const filesByName = new Map();
+  for (const entry of audioEntries) {
+    const name = path.posix.basename(entry.relativePath);
+    if (!filesByName.has(name)) filesByName.set(name, []);
+    filesByName.get(name).push(entry);
+  }
   return {
-    entries: sorted.filter((entry) => AUDIO_EXTENSIONS.has(path.posix.extname(entry.relativePath).toLowerCase())),
-    files, caseInsensitiveFiles, aliases, directories, hasArchives
+    entries: audioEntries,
+    files, caseInsensitiveFiles, filesByName, aliases, directories, hasArchives
   };
 }
 
@@ -81,6 +88,16 @@ function resolveAudio(reference, index, seen = new Set()) {
         reason: `Only ${caseMatch.relativePath} matches ignoring case. Ren'Py file names are case-sensitive, so this breaks on non-Windows platforms.`
       }];
     }
+  }
+  const matches = !filename.value.includes('/') ? index.filesByName.get(filename.value) : undefined;
+  if (matches?.length > 1) {
+    const paths = matches.slice(0, 3).map((entry) => entry.relativePath).join(', ');
+    const remaining = matches.length > 3 ? ` (+${matches.length - 3} more)` : '';
+    const archiveNote = index.hasArchives ? ' Archive contents were not checked.' : '';
+    return [{
+      status: 'ambiguous', filename: filename.value, matches,
+      reason: `Multiple files named ${filename.value} were found: ${paths}${remaining}. Ren'Py does not search nested folders by filename; use the intended full path.${archiveNote}`
+    }];
   }
   if (index.hasArchives) return [{ status: 'unverifiable', reason: `${filename.value}: may be in an .rpa archive (not inspected).` }];
   return [{ status: 'missing', filename: filename.value }];

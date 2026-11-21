@@ -58,16 +58,42 @@ async function run() {
   await vscode.workspace.fs.writeFile(audioUri, audio);
   await waitFor(() => vscode.languages.getDiagnostics(uri).filter((item) => item.source === 'Ren\'Py Sound Picker').length === 3, 'restored audio invalidation');
 
+  const duplicateUri = vscode.Uri.joinPath(first, 'game', 'duplicates.rpy');
+  await vscode.workspace.openTextDocument(duplicateUri);
+  await waitFor(() => vscode.languages.getDiagnostics(duplicateUri).some((item) =>
+    item.source === 'Ren\'Py Sound Picker' && item.severity === vscode.DiagnosticSeverity.Information), 'duplicate filename information');
   const configuration = vscode.workspace.getConfiguration('renpySoundPicker', uri);
   await configuration.update('markMissingSounds', false, vscode.ConfigurationTarget.WorkspaceFolder);
   await waitFor(() => !vscode.languages.getDiagnostics(uri).some((item) => item.source === 'Ren\'Py Sound Picker'), 'disabled warning configuration');
+  await waitFor(() => !vscode.languages.getDiagnostics(duplicateUri).some((item) => item.source === 'Ren\'Py Sound Picker'), 'disabled information configuration');
   assert.ok((await api.scanWorkspace()).some((item) => item.status === 'missing'), 'manual scan remains available with warnings disabled');
+  assert.ok((await api.scanWorkspace()).some((item) => item.status === 'ambiguous'), 'manual scan retains multiple matches with diagnostics disabled');
   await configuration.update('markMissingSounds', true, vscode.ConfigurationTarget.WorkspaceFolder);
 
   const secondDocument = await vscode.workspace.openTextDocument(vscode.Uri.joinPath(second, 'script.rpy'));
   assert.equal((await api.resultsFor(secondDocument))[0].status, 'missing', 'direct game-root workspace is isolated');
   const cancelled = await api.scanWorkspace({ isCancellationRequested: true });
   assert.equal(cancelled, null);
+  await waitFor(() => vscode.languages.getDiagnostics(duplicateUri).some((item) =>
+    item.source === 'Ren\'Py Sound Picker' && item.severity === vscode.DiagnosticSeverity.Information), 'duplicate filename information');
+  const duplicateDiagnostics = vscode.languages.getDiagnostics(duplicateUri).filter((item) => item.source === 'Ren\'Py Sound Picker');
+  assert.equal(duplicateDiagnostics.length, 1, 'fully qualified duplicate path resolves normally');
+  assert.match(duplicateDiagnostics[0].message, /audio\/duplicate-a\/copy\.wav/);
+  assert.match(duplicateDiagnostics[0].message, /audio\/duplicate-b\/copy\.wav/);
+  assert.match(duplicateDiagnostics[0].message, /Ren'Py does not search nested folders/);
+  const duplicateScan = (await api.scanWorkspace()).find((item) => item.uri.toString() === duplicateUri.toString());
+  assert.equal(duplicateScan.status, 'ambiguous', 'scanner reports multiple matches separately from missing');
+  const duplicateHovers = await vscode.commands.executeCommand('vscode.executeHoverProvider', duplicateUri, new vscode.Position(0, 15));
+  const duplicateHoverText = duplicateHovers.flatMap((hover) => hover.contents).map((item) => item.value || '').join('\n');
+  assert.match(duplicateHoverText, /Multiple(?:&nbsp;|\s)+files(?:&nbsp;|\s)+named/);
+  assert.doesNotMatch(duplicateHoverText, /Play sound/, 'ambiguous filename is not silently resolved for preview');
+  const duplicateFile = vscode.Uri.joinPath(first, 'game', 'audio', 'duplicate-b', 'copy.wav');
+  await vscode.workspace.fs.delete(duplicateFile);
+  await waitFor(() => vscode.languages.getDiagnostics(duplicateUri).some((item) =>
+    item.source === 'Ren\'Py Sound Picker' && item.severity === vscode.DiagnosticSeverity.Warning), 'missing warning after a duplicate is removed');
+  await vscode.workspace.fs.writeFile(duplicateFile, audio);
+  await waitFor(() => vscode.languages.getDiagnostics(duplicateUri).some((item) =>
+    item.source === 'Ren\'Py Sound Picker' && item.severity === vscode.DiagnosticSeverity.Information), 'information restored when duplicate returns');
   if (process.env.SOUND_TEST_UI !== '1') {
     console.log('VS Code minimum-version integration checks passed.');
     return;
@@ -93,7 +119,7 @@ async function run() {
       }
       return false;
     }, 'picker webview ready handshake');
-    assert.equal(await frame.locator('.card').count(), 2);
+    assert.equal(await frame.locator('.card').count(), 4);
     await frame.locator('#search').fill('tone');
     assert.equal(await frame.locator('.card').count(), 1);
     await frame.locator('#searchMode').selectOption('crossPartial');
@@ -153,10 +179,19 @@ async function run() {
     }, 'hover-command player panel');
     await waitFor(() => playerFrame.locator('#audio').evaluate((audio) => audio.duration === 1.25 && audio.currentTime > 0), 'hover command ready handshake playback');
 
-    const overview = vscode.commands.executeCommand('renpySoundPicker.rescanMissingSounds');
     const workbench = browser.contexts().flatMap((context) => context.pages()).find((page) => page.url().includes('workbench'));
     assert.ok(workbench, 'test workbench is accessible');
+    const duplicateOverview = vscode.commands.executeCommand('renpySoundPicker.rescanMissingSounds');
     const quickInput = workbench.locator('.quick-input-widget input').first();
+    await quickInput.waitFor({ state: 'visible' });
+    await quickInput.fill('copy.wav');
+    await waitFor(() => workbench.locator('.quick-input-list .monaco-list-row').count().then((count) => count === 1), 'filtered multiple-match overview');
+    assert.match(await workbench.locator('.quick-input-list .monaco-list-row').first().textContent(), /Multiple matches/);
+    await quickInput.press('Enter');
+    await duplicateOverview;
+    assert.equal(vscode.window.activeTextEditor.document.uri.toString(), duplicateUri.toString(), 'multiple-match overview navigates to the reference');
+
+    const overview = vscode.commands.executeCommand('renpySoundPicker.rescanMissingSounds');
     await quickInput.waitFor({ state: 'visible' });
     await quickInput.fill('missing-voice.wav');
     await waitFor(() => workbench.locator('.quick-input-list .monaco-list-row').count().then((count) => count === 1), 'filtered missing-sound overview');
@@ -164,6 +199,55 @@ async function run() {
     await overview;
     assert.equal(vscode.window.activeTextEditor.document.uri.toString(), uri.toString());
     assert.equal(document.lineAt(vscode.window.activeTextEditor.selection.start.line).text.trim(), 'voice "missing-voice.wav"', 'overview navigates to the actual missing reference');
+
+    const insertionDocument = await vscode.workspace.openTextDocument(vscode.Uri.joinPath(first, 'game', 'insertion.rpy'));
+    const scenarios = [
+      { line: 1, expected: '    play sound "audio/tone.wav" # comment' },
+      { line: 2, expected: '    play sound "audio/tone.wav" volume 0.4 # keep' },
+      { line: 3, sound: 'corrupt.wav', expected: '    play sound "audio/corrupt.wav" volume 0.4 # keep' }
+    ];
+    let previousFrame = playerFrame;
+    for (const scenario of scenarios) {
+      const insertionEditor = await vscode.window.showTextDocument(insertionDocument, { viewColumn: vscode.ViewColumn.One });
+      insertionEditor.selection = new vscode.Selection(scenario.line, 4, scenario.line, 4);
+      await vscode.commands.executeCommand('renpySoundPicker.insertSoundFromProject');
+      await waitFor(() => previousFrame.isDetached(), 'previous sound panel has reloaded');
+      let pickerFrame;
+      await waitFor(async () => {
+        for (const page of browser.contexts().flatMap((context) => context.pages())) {
+          for (const candidate of page.frames()) {
+            if (await candidate.locator('body[data-picker="true"] #grid .card').count()) {
+              pickerFrame = candidate;
+              return true;
+            }
+          }
+        }
+        return false;
+      }, `picker ready for insertion on line ${scenario.line + 1}`);
+      previousFrame = pickerFrame;
+      const oldVersion = insertionDocument.version;
+      await pickerFrame.locator('#search').fill(scenario.sound ? 'corrupt' : 'tone');
+      await pickerFrame.locator('#channel').selectOption('sound');
+      await click(pickerFrame.getByRole('button', { name: `Insert audio/${scenario.sound || 'tone.wav'}`, exact: true }));
+      try {
+        await waitFor(() => insertionDocument.version > oldVersion &&
+          insertionDocument.lineAt(scenario.resultLine ?? scenario.line).text === scenario.expected,
+        `sound insertion on line ${scenario.line + 1}`);
+      } catch (error) {
+        throw new Error(`${error.message}: ${JSON.stringify(insertionDocument.getText())}; panel: ${await pickerFrame.locator('#actionError').textContent()}`);
+      }
+    }
+    const insertionEditor = await vscode.window.showTextDocument(insertionDocument, { viewColumn: vscode.ViewColumn.One });
+    insertionEditor.selection = new vscode.Selection(3, 4, 3, 4);
+    await vscode.commands.executeCommand('cursorMove', { to: 'down', by: 'line', value: 1 });
+    await waitFor(() => insertionEditor.selection.active.line === 4, 'move cursor to blank line with picker open');
+    const blankVersion = insertionDocument.version;
+    await previousFrame.locator('#search').fill('tone');
+    await click(previousFrame.getByRole('button', { name: 'Insert audio/tone.wav', exact: true }));
+    await waitFor(() => insertionDocument.version > blankVersion &&
+      insertionDocument.lineAt(5).text === '    play sound "audio/tone.wav"',
+    'blank-line insertion with picker left open');
+
     await vscode.commands.executeCommand('workbench.action.closeAllEditors');
     await waitFor(() => playerFrame.isDetached(), 'closing the panel disposes its player');
     console.log('Extension-host and real webview checks passed: activation, hover, actions, diagnostics, scanning, dirty aliases, file invalidation, settings, project isolation, search, playback/stop, focused insertion, ambiguous playlists, and corrupt audio.');

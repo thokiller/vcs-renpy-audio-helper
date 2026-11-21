@@ -57,6 +57,10 @@ test('lookup uses game first, then ordered audio directories, never approximate 
   const unusual = createIndex(entries('audio/track.custom'));
   assert.equal(resolution('play sound "audio/track.custom"', unusual)[0].status, 'found', 'existence is independent of recognized extensions');
   assert.equal(unusual.entries.length, 0, 'picker discovery is restricted to RenPy formats');
+  const nestedWav = createIndex(entries('audio/effects/00012828_1.wav'));
+  assert.equal(resolution('play sound "00012828_1.wav"', nestedWav)[0].status, 'missing');
+  assert.equal(resolution('play sound "effects/00012828_1.wav"', nestedWav)[0].status, 'found');
+  assert.equal(resolution('play sound "audio/effects/00012828_1.wav"', nestedWav)[0].status, 'found');
 });
 
 test('automatic aliases use identifier basenames, alphabetical precedence and eligible extensions', () => {
@@ -110,6 +114,24 @@ test('a file that matches only by case is reported as a case mismatch, not silen
   assert.equal(resolution('play sound "struggle.wav"', archived)[0].status, 'missing');
 });
 
+test('duplicate bare filenames are informational candidates, not an arbitrary playable match', () => {
+  const index = createIndex(entries('audio/a/copy.wav', 'audio/b/copy.wav'));
+  const [result] = resolution('play sound "copy.wav"', index);
+  assert.equal(result.status, 'ambiguous');
+  assert.deepEqual(result.matches.map((entry) => entry.relativePath), ['audio/a/copy.wav', 'audio/b/copy.wav']);
+  assert.match(result.reason, /Ren'Py does not search nested folders/);
+  assert.equal(resolution('play sound "audio/a/copy.wav"', index)[0].status, 'found');
+  assert.equal(resolution('play sound "wrong/copy.wav"', index)[0].status, 'missing');
+  assert.equal(resolution('play sound "copy.wav"', createIndex(entries('audio/a/copy.wav')))[0].status, 'missing');
+  assert.equal(resolution('play sound "copy.wav"', createIndex(entries('audio/copy.wav', 'audio/a/copy.wav')))[0].status, 'found');
+  const caseMismatch = createIndex(entries('audio/Copy.wav', 'audio/a/copy.wav', 'audio/b/copy.wav'));
+  assert.equal(resolution('play sound "copy.wav"', caseMismatch)[0].caseMatch.relativePath, 'audio/Copy.wav');
+  const many = createIndex(entries('a/copy.wav', 'b/copy.wav', 'c/copy.wav', 'd/copy.wav'));
+  assert.match(resolution('play sound "copy.wav"', many)[0].reason, /\(\+1 more\)/);
+  const archived = createIndex(entries('audio/a/copy.wav', 'audio/b/copy.wav'), [], ['audio'], true);
+  assert.match(resolution('play sound "copy.wav"', archived)[0].reason, /Archive contents were not checked/);
+});
+
 test('insertion replaces one sound and preserves channel, modifiers, comments and other playlist items', () => {
   const text = '    play music "old.ogg" fadeout 1.0 loop # keep';
   assert.equal(apply(text, text.indexOf('old'), 'audio/new "track".ogg'), '    play music "audio/new \\"track\\".ogg" fadeout 1.0 loop # keep');
@@ -119,6 +141,21 @@ test('insertion replaces one sound and preserves channel, modifiers, comments an
   assert.equal(apply('voice "old.ogg"', 8, 'voice/new.ogg'), 'voice "voice/new.ogg"');
 });
 
+test('insertion completes missing audio without losing modifiers, comments or whitespace', () => {
+  assert.equal(apply('    play sound', 14, 'audio/new.wav'), '    play sound "audio/new.wav"');
+  assert.equal(apply('    play sound  # comment', 14, 'audio/new.wav'), '    play sound "audio/new.wav"  # comment');
+  assert.equal(apply('    play sound   volume 0.4 # comment', 32, 'audio/new.wav'),
+    '    play sound   "audio/new.wav" volume 0.4 # comment');
+  assert.equal(apply('    queue music fadein 1.0 noloop', 16, 'audio/new.wav'),
+    '    queue music "audio/new.wav" fadein 1.0 noloop');
+  assert.equal(apply('    voice', 9, 'audio/new.wav'), '    voice "audio/new.wav"');
+  assert.deepEqual(referencesOf(parseAudio('play sound volume 0.4')[0]), []);
+  assert.throws(() => apply('play sound volume + other', 15, 'audio/new.wav'), /Dynamic/);
+  assert.throws(() => apply('play sound volume - 1', 15, 'audio/new.wav'), /Dynamic/);
+  assert.throws(() => apply('play sound volume.track', 15, 'audio/new.wav'), /Dynamic/);
+  assert.equal(apply('play sound volume', 15, 'audio/new.wav'), 'play sound "audio/new.wav"');
+});
+
 test('new insertion uses indentation/EOL and refuses dynamic statements', () => {
   assert.equal(apply('    "Dialogue"\r\n    return\r\n', 8, 'audio/new.ogg', 'sound', '\r\n'),
     '    "Dialogue"\r\n    play sound "audio/new.ogg"\r\n    return\r\n');
@@ -126,4 +163,7 @@ test('new insertion uses indentation/EOL and refuses dynamic statements', () => 
   assert.throws(() => apply('play sound expression get_sound()', 15, 'a.ogg'), /expression/);
   assert.throws(() => apply('play sound get_sound()', 15, 'a.ogg'), /Dynamic/);
   assert.throws(() => apply('"""dialogue\nmore dialogue\n"""', 16, 'a.ogg'), /multiline string/);
+  const blank = '    play sound get_sound()\n    \n    return';
+  assert.equal(apply(blank, blank.indexOf('\n    \n') + 5, 'audio/new.wav'),
+    '    play sound get_sound()\n    \n    play sound "audio/new.wav"\n    return');
 });

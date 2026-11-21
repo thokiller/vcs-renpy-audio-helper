@@ -12,7 +12,21 @@ async function main() {
     await fs.mkdir(path.join(root, 'first', 'renpy'), { recursive: true });
     await fs.writeFile(path.join(root, 'first', 'game', 'audio', 'tone.wav'), wav());
     await fs.writeFile(path.join(root, 'first', 'game', 'audio', 'corrupt.wav'), 'not audio');
+    for (const dir of ['duplicate-a', 'duplicate-b']) {
+      await fs.mkdir(path.join(root, 'first', 'game', 'audio', dir));
+      await fs.writeFile(path.join(root, 'first', 'game', 'audio', dir, 'copy.wav'), wav());
+    }
+    await fs.writeFile(path.join(root, 'first', 'game', 'duplicates.rpy'),
+      'play sound "copy.wav"\nplay sound "audio/duplicate-a/copy.wav"\n');
     await fs.writeFile(path.join(root, 'first', 'game', 'aliases.rpy'), 'define audio.theme = "audio/tone.wav"\n');
+    await fs.writeFile(path.join(root, 'first', 'game', 'insertion.rpy'), [
+      'label insertion_test:',
+      '    play sound # comment',
+      '    play sound volume 0.4 # keep',
+      '    play sound "audio/tone.wav" volume 0.4 # keep',
+      '    ',
+      '    return'
+    ].join('\n'));
     await fs.writeFile(path.join(root, 'first', 'game', 'script.rpy'), [
       'label start:',
       '    play music theme fadein 1.0',

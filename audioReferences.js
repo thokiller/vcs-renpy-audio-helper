@@ -125,6 +125,15 @@ function parseStatement(tokens) {
     channel = tokens[cursor++].value;
   }
   if (tokens[cursor]?.value === 'expression') return null;
+  const first = tokens[cursor];
+  const next = tokens[cursor + 1];
+  const numberStart = next?.type === 'punctuation' && (/^[0-9]$/.test(next.value) ||
+    (next.value === '.' && /^[0-9]$/.test(tokens[cursor + 2]?.value || '')));
+  const missingBeforeModifier = first && ['volume', 'fadein', 'fadeout'].includes(first.value) && numberStart;
+  if (kind !== 'define' && (!first || missingBeforeModifier)) {
+    const position = first ? first.start : tokens[cursor - 1].end;
+    return { kind, channel, value: { type: 'incomplete', start: position, end: position }, start: tokens[0].start, end: tokens[tokens.length - 1].end };
+  }
   const parsed = parseValue(tokens, cursor);
   const tail = parsed && tokens[parsed.next];
   const isStatic = Boolean(parsed && (!tail || (kind !== 'define' && MODIFIERS.has(tail.value))));
@@ -159,6 +168,7 @@ function parseAudio(text) {
 }
 
 function referencesOf(statement) {
+  if (statement.value.type === 'incomplete') return [];
   return statement.value.type === 'list' ? statement.value.items : [statement.value];
 }
 
@@ -169,6 +179,7 @@ function referenceAt(text, offset) {
     const newline = text.indexOf('\n', statement.end);
     const lineEnd = newline === -1 ? text.length : newline;
     if (offset < lineStart || offset > lineEnd) continue;
+    if (statement.value.type === 'incomplete') return { statement, reference: statement.value };
     const items = referencesOf(statement);
     const reference = items.find((item) => offset >= item.start && offset <= item.end);
     return { statement, reference: reference || (items.length === 1 && statement.value.type !== 'list' ? items[0] : null) };
@@ -183,6 +194,12 @@ function insertionEdit(text, offset, relativePath, channel = 'sound', eol = '\n'
   if (target) {
     if (!target.reference) throw new Error('Place the cursor on the playlist item to replace.');
     if (target.reference.type === 'dynamic') throw new Error('Dynamic audio statements cannot be safely replaced.');
+    if (target.reference.type === 'incomplete') {
+      const position = target.reference.start;
+      const prefix = position > 0 && !/\s/.test(text[position - 1]) ? ' ' : '';
+      const suffix = position < text.length && !/\s/.test(text[position]) ? ' ' : '';
+      return { start: position, end: position, text: `${prefix}${quoted}${suffix}` };
+    }
     return { start: target.reference.start, end: target.reference.end, text: quoted };
   }
   if (tokenize(text).some((token) => token.start <= offset && token.end > offset &&

@@ -19,7 +19,10 @@ but **the image extension is not required**.
 - Warning squiggles identify definitively missing static audio files, including
   files that exist with different letter case (which breaks Ren'Py on
   non-Windows platforms); the warning names the actual file.
-- A project-wide overview lists **Missing** and **Unverifiable** references,
+- If an unresolved bare filename matches multiple files in subfolders, an
+  informational blue marker lists candidate paths instead of a missing warning.
+  The files may differ; the extension does not pick or play one automatically.
+- A project-wide overview lists **Missing**, **Multiple matches**, and **Unverifiable** references,
   with navigation to their script and line.
 
 Open a Ren'Py project root (containing `game`) or the `game` directory itself.
@@ -59,6 +62,8 @@ While editing `.rpy` or `.rpym`:
 
 - On an existing static audio statement, Insert replaces only the selected sound,
   preserving its channel, modifiers, indentation, and comments.
+- On an incomplete statement such as `play sound` or `play sound volume 0.4`,
+  Insert fills in the missing sound while preserving the channel and modifiers.
 - In a playlist, put the cursor on the individual item to replace. Ambiguous
   playlist targets are rejected; other items are left untouched.
 - On a `define audio.name` value, Insert replaces the selected static value.
@@ -83,6 +88,11 @@ Lookup follows Ren'Py's order:
 For example, `"theme.ogg"` checks `game/theme.ogg`, then
 `game/audio/theme.ogg`. A similarly named file somewhere else does not count.
 The picker discovers loose audio anywhere under game, not just in `game/audio`.
+For a file in a subdirectory such as `game/audio/effects/step.wav`, use
+`"effects/step.wav"` or `"audio/effects/step.wav"`, not just `"step.wav"`.
+If several subfolders contain `step.wav`, the blue information marker is a
+hint to choose one with the picker, not confirmation that the bare filename
+will play in Ren'Py.
 
 Automatic audio aliases use lowercase Python-identifier basenames from audio
 lookup directories and their subdirectories. Supported automatic alias extensions
@@ -126,7 +136,7 @@ and `saves` directories are excluded.
 | Setting | Default | Purpose |
 | --- | --- | --- |
 | `renpySoundPicker.audioDirectories` | `["audio"]` | Ordered game-relative lookup directories, matching your `config.audio_directories`. The game directory is always searched first. |
-| `renpySoundPicker.markMissingSounds` | `true` | Warning diagnostics for definitively missing static files. |
+| `renpySoundPicker.markMissingSounds` | `true` | Missing-file warnings and multiple-match informational diagnostics. |
 | `renpySoundPicker.keepSoundPickerOpen` | `true` | Keep the panel open after insertion. |
 
 Settings support per-project workspace-folder overrides. Audio directories must

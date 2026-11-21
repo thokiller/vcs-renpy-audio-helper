@@ -191,10 +191,11 @@ function activate(context) {
       const documentVersion = document.version;
       const results = await resultsFor(document);
       if (disposed || version !== generation || document.version !== documentVersion) return;
-      const warnings = results.filter((result) => result.status === 'missing').map((result) => {
+      const warnings = results.filter((result) => ['missing', 'ambiguous'].includes(result.status)).map((result) => {
         const caseHint = result.caseMatch ? ` (did you mean ${result.caseMatch.relativePath}? names are case-sensitive)` : '';
-        const diagnostic = new vscode.Diagnostic(rangeOf(document, result.reference),
-          `Ren'Py sound not found: ${result.filename}${caseHint}`, vscode.DiagnosticSeverity.Warning);
+        const message = result.status === 'ambiguous' ? result.reason : `Ren'Py sound not found: ${result.filename}${caseHint}`;
+        const severity = result.status === 'ambiguous' ? vscode.DiagnosticSeverity.Information : vscode.DiagnosticSeverity.Warning;
+        const diagnostic = new vscode.Diagnostic(rangeOf(document, result.reference), message, severity);
         diagnostic.source = 'Ren\'Py Sound Picker';
         return diagnostic;
       });
@@ -394,6 +395,7 @@ function activate(context) {
     const document = await vscode.workspace.openTextDocument(target.uri);
     const match = referenceAt(document.getText(), target.offset);
     if (!match?.reference) throw new Error('Place the cursor on the sound or individual playlist item to preview.');
+    if (match.reference.type === 'incomplete') throw new Error('This audio statement does not have a sound to preview yet.');
     const snapshot = await currentSnapshot(target.uri);
     const found = resolveAudio(match.reference, snapshot.index);
     const playable = found.filter((result) => result.status === 'found');
@@ -428,7 +430,7 @@ function activate(context) {
       for (const statement of parseAudio(text)) {
         for (const reference of referencesOf(statement)) {
           for (const resolution of resolveAudio(reference, snapshot.index)) {
-            if (!['missing', 'unverifiable'].includes(resolution.status)) continue;
+            if (!['missing', 'ambiguous', 'unverifiable'].includes(resolution.status)) continue;
             results.push({ uri, statement, reference, ...resolution, ...positionOf(text, reference.start) });
           }
         }
@@ -453,18 +455,19 @@ function activate(context) {
       if (!dirty) scanCache = { time: Date.now(), results };
     }
     if (!results.length) {
-      vscode.window.showInformationMessage('No missing or unverifiable static audio references found in loose project scripts. Archives and Python audio calls are not inspected.');
+      vscode.window.showInformationMessage('No missing, ambiguous, or unverifiable static audio references found in loose project scripts. Archives and Python audio calls are not inspected.');
       return results;
     }
     const items = results.map((result) => ({
-      label: `${result.status === 'missing' ? '$(warning) Missing' : '$(question) Unverifiable'}: ${result.filename || result.reference.value}`,
+      label: `${result.status === 'missing' ? '$(warning) Missing' : result.status === 'ambiguous' ? '$(info) Multiple matches' : '$(question) Unverifiable'}: ${result.filename || result.reference.value}`,
       description: `${vscode.workspace.asRelativePath(result.uri)}:${result.line + 1}`,
       detail: result.reason || result.lineText.trim(),
       result
     }));
     const missing = results.filter((result) => result.status === 'missing').length;
+    const ambiguous = results.filter((result) => result.status === 'ambiguous').length;
     const item = await vscode.window.showQuickPick(items, {
-      title: `${missing} missing, ${results.length - missing} unverifiable audio references`,
+      title: `${missing} missing, ${ambiguous} multiple matches, ${results.length - missing - ambiguous} unverifiable audio references`,
       placeHolder: 'Choose a reference to open its file and line', matchOnDescription: true, matchOnDetail: true
     });
     if (item) {
@@ -485,7 +488,7 @@ function activate(context) {
   const missingStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 97);
   missingStatus.text = '$(list-selection) Ren\'Py Missing Sounds';
   missingStatus.command = 'renpySoundPicker.listMissingSounds';
-  missingStatus.tooltip = 'List missing and unverifiable static audio references';
+  missingStatus.tooltip = 'List missing, multiple-match, and unverifiable static audio references';
   function updateEditor() {
     const target = editorTarget(vscode.window.activeTextEditor);
     if (target) lastTarget = target;
@@ -530,7 +533,7 @@ function activate(context) {
       provideHover: guarded('Sound hover', async (document, position) => {
         if (!isSupported(document)) return null;
         const target = referenceAt(document.getText(), document.offsetAt(position));
-        if (!target?.reference || target.reference.type === 'dynamic') return null;
+        if (!target?.reference || ['dynamic', 'incomplete'].includes(target.reference.type)) return null;
         const snapshot = await currentSnapshot(document.uri);
         const resolutions = resolveAudio(target.reference, snapshot.index);
         const markdown = new vscode.MarkdownString();
